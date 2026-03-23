@@ -5,6 +5,7 @@ import threading
 import time
 import tkinter as tk
 
+
 FILAS = 25
 COLUMNAS = 40
 TOTAL_ASIENTOS = FILAS * COLUMNAS
