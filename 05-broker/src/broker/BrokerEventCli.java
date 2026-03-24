@@ -15,6 +15,8 @@ public class BrokerEventCli {
         int expectedClients = 0;
         String clientId = "";
         int buyers = 0;
+        int sold = 0;
+        int total = 0;
         String summary = "";
 
         for (int i = 0; i < args.length; i++) {
@@ -49,6 +51,12 @@ public class BrokerEventCli {
                 case "--buyers":
                     buyers = Integer.parseInt(args[++i]);
                     break;
+                case "--sold":
+                    sold = Integer.parseInt(args[++i]);
+                    break;
+                case "--total":
+                    total = Integer.parseInt(args[++i]);
+                    break;
                 case "--summary":
                     summary = args[++i];
                     break;
@@ -67,6 +75,9 @@ public class BrokerEventCli {
                 break;
             case "CLIENT_CONNECTED":
                 remote.clientConnected(saleId, clientId, buyers);
+                break;
+            case "SALES_PROGRESS":
+                remote.salesProgress(saleId, sold, total);
                 break;
             case "SERVER_FINISHED":
                 remote.serverFinished(saleId, summary);

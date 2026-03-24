@@ -14,7 +14,7 @@ public class BrokerService extends UnicastRemoteObject implements BrokerRemote {
     public static final String STATUS_GRAY = "gray";
     public static final String STATUS_BLUE = "blue";
     public static final String STATUS_ORANGE = "orange";
-    public static final String STATUS_GREEN = "green";
+    public static final String STATUS_RED = "red";
 
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss");
 
@@ -49,11 +49,27 @@ public class BrokerService extends UnicastRemoteObject implements BrokerRemote {
             SaleStatus state = bySale.computeIfAbsent(saleId, this::newSale);
             state.connectedClients += 1;
             state.buyerThreads += Math.max(0, buyers);
-            if (!STATUS_GREEN.equals(state.status)) {
-                state.status = STATUS_ORANGE;
+            if (!STATUS_RED.equals(state.status)) {
+                state.status = STATUS_BLUE;
             }
             state.updatedAt = now();
             System.out.println("[Broker] CLIENT_CONNECTED sale=" + saleId + " client=" + clientId + " connected=" + state.connectedClients + "/" + state.expectedClients);
+        }
+    }
+
+    @Override
+    public void salesProgress(String saleId, int soldSeats, int totalSeats) {
+        if (saleId == null || saleId.isBlank()) {
+            return;
+        }
+        synchronized (lock) {
+            SaleStatus state = bySale.computeIfAbsent(saleId, this::newSale);
+            state.soldSeats = Math.max(0, soldSeats);
+            state.totalSeats = Math.max(0, totalSeats);
+            if (!STATUS_RED.equals(state.status) && state.connectedClients > 0 && state.soldSeats > 0) {
+                state.status = STATUS_ORANGE;
+            }
+            state.updatedAt = now();
         }
     }
 
@@ -64,7 +80,7 @@ public class BrokerService extends UnicastRemoteObject implements BrokerRemote {
         }
         synchronized (lock) {
             SaleStatus state = bySale.computeIfAbsent(saleId, this::newSale);
-            state.status = STATUS_GREEN;
+            state.status = STATUS_RED;
             state.summary = summary == null ? "" : summary;
             state.updatedAt = now();
             System.out.println("[Broker] SERVER_FINISHED sale=" + saleId + " summary=" + state.summary);
@@ -93,6 +109,8 @@ public class BrokerService extends UnicastRemoteObject implements BrokerRemote {
         status.expectedClients = 0;
         status.connectedClients = 0;
         status.buyerThreads = 0;
+        status.soldSeats = 0;
+        status.totalSeats = 0;
         status.updatedAt = now();
         status.summary = "";
         return status;

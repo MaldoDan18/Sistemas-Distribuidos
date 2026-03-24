@@ -66,7 +66,7 @@ NOTA: Cuando se conecte el Servidor 2, verás en Terminal 1 que comienza la cuen
 TERMINAL 4: CLIENTE 1 (Conecta a Servidor 1)
 ================================================================================
 
-python cliente.py a 5 --host 127.0.0.1 --port 5000 --client-id ACCESO-01 --sale-id SALA-01 --coordinator-host 127.0.0.1 --coordinator-port 6000 --broker-host 127.0.0.1 --broker-port 1099 --broker-bind BrokerService --broker-java-cp out
+python cliente.py a 2000 --host 127.0.0.1 --port 5000 --client-id ACCESO-01 --sale-id SALA-01 --coordinator-host 127.0.0.1 --coordinator-port 6000 --broker-host 127.0.0.1 --broker-port 1099 --broker-bind BrokerService --broker-java-cp out
 
 Esperada:
 - Cliente conectado al servidor
@@ -76,7 +76,7 @@ Esperada:
 TERMINAL 5: CLIENTE 2 (Conecta a Servidor 2)
 ================================================================================
 
-python cliente.py a 5 --host 127.0.0.1 --port 5001 --client-id ACCESO-02 --sale-id SALA-02 --coordinator-host 127.0.0.1 --coordinator-port 6000 --broker-host 127.0.0.1 --broker-port 1099 --broker-bind BrokerService --broker-java-cp out
+python cliente.py a 1500 --host 127.0.0.1 --port 5001 --client-id ACCESO-02 --sale-id SALA-02 --coordinator-host 127.0.0.1 --coordinator-port 6000 --broker-host 127.0.0.1 --broker-port 1099 --broker-bind BrokerService --broker-java-cp out
 
 Esperada:
 - Cliente conectado al servidor

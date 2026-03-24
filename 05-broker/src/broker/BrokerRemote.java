@@ -8,6 +8,8 @@ public interface BrokerRemote extends Remote {
 
     void clientConnected(String saleId, String clientId, int buyers) throws RemoteException;
 
+    void salesProgress(String saleId, int soldSeats, int totalSeats) throws RemoteException;
+
     void serverFinished(String saleId, String summary) throws RemoteException;
 
     BrokerSnapshot getSnapshot() throws RemoteException;

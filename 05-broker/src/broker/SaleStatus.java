@@ -11,6 +11,8 @@ public class SaleStatus implements Serializable {
     public int expectedClients;
     public int connectedClients;
     public int buyerThreads;
+    public int soldSeats;
+    public int totalSeats;
     public String updatedAt;
     public String summary;
 
@@ -22,6 +24,8 @@ public class SaleStatus implements Serializable {
         other.expectedClients = this.expectedClients;
         other.connectedClients = this.connectedClients;
         other.buyerThreads = this.buyerThreads;
+        other.soldSeats = this.soldSeats;
+        other.totalSeats = this.totalSeats;
         other.updatedAt = this.updatedAt;
         other.summary = this.summary;
         return other;

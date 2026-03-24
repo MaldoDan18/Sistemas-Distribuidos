@@ -92,10 +92,18 @@ def notify_broker_event(broker_config, event_type, sale_id, **extra_args):
             "--summary",
             str(extra_args.get("summary", "")),
         ])
+    elif event_type == "SALES_PROGRESS":
+        command.extend([
+            "--sold",
+            str(int(extra_args.get("sold", 0))),
+            "--total",
+            str(int(extra_args.get("total", 0))),
+        ])
 
     try:
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=6)
-        print(f"[Broker] {event_type} enviado: sale={sale_id}")
+        if event_type != "SALES_PROGRESS":
+            print(f"[Broker] {event_type} enviado: sale={sale_id}")
     except Exception as ex:
         print(f"[Broker] No se pudo notificar {event_type}: {ex}")
 
@@ -1188,6 +1196,33 @@ def cleanup_expired_reservations(ticket_state):
         time.sleep(0.25)
 
 
+def monitor_progress_to_broker(ticket_state, broker_config, sale_id):
+    if not sale_id:
+        return
+
+    last_sold = -1
+    last_sent_at = 0.0
+    while not ticket_state.sold_out_event.is_set():
+        now = time.monotonic()
+        with ticket_state.meta_lock:
+            sold = int(ticket_state.sold_count)
+        changed = sold != last_sold
+        heartbeat_due = (now - last_sent_at) >= 2.0
+
+        if changed or heartbeat_due:
+            notify_broker_event(
+                broker_config,
+                "SALES_PROGRESS",
+                sale_id,
+                sold=sold,
+                total=TOTAL_ASIENTOS,
+            )
+            last_sold = sold
+            last_sent_at = now
+
+        time.sleep(0.20)
+
+
 def monitor_sold_out(ticket_state, coordinator_client=None, broker_config=None, sale_id=None):
     ticket_state.sold_out_event.wait()
     with ticket_state.meta_lock:
@@ -1305,6 +1340,13 @@ def main():
 
     cleanup_thread = threading.Thread(target=cleanup_expired_reservations, args=(ticket_state,), daemon=True)
     cleanup_thread.start()
+
+    broker_progress_thread = threading.Thread(
+        target=monitor_progress_to_broker,
+        args=(ticket_state, broker_config, sale_id),
+        daemon=True,
+    )
+    broker_progress_thread.start()
 
     print("Servidor de boletos iniciado")
     print(f"Escuchando en {args.host}:{args.port}")
