@@ -315,6 +315,12 @@ class CoordinatorHandler(socketserver.StreamRequestHandler):
                     }
                 )
 
+                # Print registration info
+                registered = result["registered_servers"]
+                expected_servers = result["expected_servers"]
+                remaining = expected_servers - registered
+                print(f"[Servidor] {sale_id} conectado. Servidores registrados: {registered}/{expected_servers}. Faltan {remaining}.")
+
                 if start_now:
                     print("[Coordinador] Condición global cumplida. Iniciando cuenta regresiva...")
                     self.server.state.broadcast_global_start_delayed(countdown_seconds=8)
@@ -355,6 +361,13 @@ class CoordinatorHandler(socketserver.StreamRequestHandler):
                         "total_buyer_threads": total_buyers,
                     }
                 )
+
+                # Print client connection info
+                if expected is not None:
+                    remaining_clients = expected - connected
+                    print(f"[Cliente] {client_id} conectado a {sale_id}. Clientes: {connected}/{expected}. Faltan {remaining_clients}.")
+                else:
+                    print(f"[Cliente] {client_id} conectado a {sale_id} (servidor aún no registrado).")
 
                 if start_now:
                     print("[Coordinador] Condición global cumplida. Iniciando cuenta regresiva...")

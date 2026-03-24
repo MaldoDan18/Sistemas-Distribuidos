@@ -95,8 +95,9 @@ def notify_broker_event(broker_config, event_type, sale_id, **extra_args):
 
     try:
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=6)
-    except Exception:
-        pass
+        print(f"[Broker] {event_type} enviado: sale={sale_id}")
+    except Exception as ex:
+        print(f"[Broker] No se pudo notificar {event_type}: {ex}")
 
 
 class TicketState:
@@ -1248,7 +1249,7 @@ def parse_args():
     parser.add_argument("--sale-id", default=None, help="Identificador de esta venta/servidor")
     parser.add_argument("--coordinator-host", default=None, help="Host del coordinador global")
     parser.add_argument("--coordinator-port", type=int, default=6000, help="Puerto del coordinador global")
-    parser.add_argument("--broker-host", default=None, help="Host del broker RMI")
+    parser.add_argument("--broker-host", default="127.0.0.1", help="Host del broker RMI")
     parser.add_argument("--broker-port", type=int, default=1099, help="Puerto del broker RMI")
     parser.add_argument("--broker-bind", default="BrokerService", help="Nombre de binding RMI del broker")
     parser.add_argument("--broker-java-cp", default="out", help="Classpath Java con clases compiladas del broker")

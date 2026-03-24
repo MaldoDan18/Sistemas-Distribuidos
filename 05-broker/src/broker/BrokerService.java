@@ -36,6 +36,7 @@ public class BrokerService extends UnicastRemoteObject implements BrokerRemote {
             state.expectedClients = Math.max(0, expectedClients);
             state.status = STATUS_BLUE;
             state.updatedAt = now();
+            System.out.println("[Broker] SERVER_REGISTERED sale=" + saleId + " server=" + state.server + " expectedClients=" + state.expectedClients);
         }
     }
 
@@ -52,6 +53,7 @@ public class BrokerService extends UnicastRemoteObject implements BrokerRemote {
                 state.status = STATUS_ORANGE;
             }
             state.updatedAt = now();
+            System.out.println("[Broker] CLIENT_CONNECTED sale=" + saleId + " client=" + clientId + " connected=" + state.connectedClients + "/" + state.expectedClients);
         }
     }
 
@@ -65,6 +67,7 @@ public class BrokerService extends UnicastRemoteObject implements BrokerRemote {
             state.status = STATUS_GREEN;
             state.summary = summary == null ? "" : summary;
             state.updatedAt = now();
+            System.out.println("[Broker] SERVER_FINISHED sale=" + saleId + " summary=" + state.summary);
         }
     }
 

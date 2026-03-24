@@ -142,6 +142,8 @@ def notify_broker_client_connected(broker_host, broker_port, broker_bind, broker
 
     try:
         subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        with terminal_lock:
+            print(f"[Broker] CLIENT_CONNECTED enviado: sale={sale_id}, client={client_id}, buyers={buyers_count}")
     except Exception:
         with terminal_lock:
             print("[Broker] No se pudo notificar CLIENT_CONNECTED.")
@@ -386,7 +388,7 @@ def parse_args():
     parser.add_argument("--sale-id", default=None, help="ID de venta para sincronización con coordinador")
     parser.add_argument("--coordinator-host", default=None, help="Host del coordinador global")
     parser.add_argument("--coordinator-port", type=int, default=6000, help="Puerto del coordinador global")
-    parser.add_argument("--broker-host", default=None, help="Host del broker RMI")
+    parser.add_argument("--broker-host", default="127.0.0.1", help="Host del broker RMI")
     parser.add_argument("--broker-port", type=int, default=1099, help="Puerto del broker RMI")
     parser.add_argument("--broker-bind", default="BrokerService", help="Nombre de binding RMI del broker")
     parser.add_argument("--broker-java-cp", default="out", help="Classpath Java con clases compiladas del broker")
