@@ -19,10 +19,10 @@ Modulo Java RMI para observabilidad del estado de ventas por saleId.
 
 Comando:
 
-```powershell
+powershell
 cd 05-broker
 ./build.ps1
-```
+
 
 Resultado esperado:
 
@@ -32,17 +32,17 @@ Resultado esperado:
 
 Comando recomendado:
 
-```powershell
+powershell
 cd 05-broker
 ./run-broker.ps1
-```
+
 
 Comando equivalente:
 
-```powershell
+powershell
 cd 05-broker
 java -cp out broker.BrokerServerMain --host 127.0.0.1 --port 1099 --bind BrokerService
-```
+
 
 Resultado esperado:
 
@@ -53,10 +53,10 @@ Resultado esperado:
 
 Comando:
 
-```powershell
+powershell
 cd 05-broker
 java -cp out broker.BrokerEventCli --host 127.0.0.1 --port 1099 --bind BrokerService --event SERVER_REGISTERED --sale-id SALA-PRUEBA --server-host 127.0.0.1 --server-port 5000 --expected-clients 3
-```
+
 
 Resultado esperado:
 
