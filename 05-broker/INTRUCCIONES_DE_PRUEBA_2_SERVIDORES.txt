@@ -1,0 +1,101 @@
+================================================================================
+INTRUCCIONES DE PRUEBA 2 SERVIDORES
+================================================================================
+
+PASO 1: Ejecutar Broker RMI (OBLIGATORIO)
+--------------------------------------------------------------------------------
+Compilación de Java:
+./build.ps1
+
+Ejecución del broker:
+./run-broker.ps1
+
+Resultado esperado:
+- Broker RMI iniciado en 127.0.0.1:1099
+- Apertura de una ventana con tabla en tiempo real mostrando el estado de las ventas
+
+PASO 2: Navegar a la carpeta en todas las terminales
+--------------------------------------------------------------------------------
+cd c:\Users\malbe\Documentos\Github\Sistemas-Distribuidos\05-broker
+
+TERMINAL 1: COORDINADOR GLOBAL
+--------------------------------------------------------------------------------
+Ejecutar:
+python coordinador.py 2 --host 127.0.0.1 --port 6000
+
+Resultado esperado:
+- Coordinador global iniciado
+- Escuchando en 127.0.0.1:6000
+- Servidores esperados: 2
+
+Monitoreo en tiempo real:
+- Conexión de servidores:
+  [Servidor] SALA-XX conectado. Servidores registrados: X/2. Faltan X.
+- Conexión de clientes:
+  [Cliente] ACCESO-XX conectado a SALA-XX. Clientes: X/1. Faltan X.
+- Inicio de cuenta regresiva cuando todos están conectados
+
+TERMINAL 2: SERVIDOR 1 (Puerto 5000)
+--------------------------------------------------------------------------------
+Ejecutar:
+python servidor.py 1 --host 127.0.0.1 --port 5000 --sale-id SALA-01 --coordinator-host 127.0.0.1 --coordinator-port 6000 --broker-host 127.0.0.1 --broker-port 1099 --broker-bind BrokerService --broker-java-cp out
+
+Resultado esperado:
+- Servidor iniciado en 127.0.0.1:5000
+- Registrado con coordinador: slot=0, servidores registrados=1/2
+- Esperando cliente
+
+TERMINAL 3: SERVIDOR 2 (Puerto 5001)
+--------------------------------------------------------------------------------
+Ejecutar:
+python servidor.py 1 --host 127.0.0.1 --port 5001 --sale-id SALA-02 --coordinator-host 127.0.0.1 --coordinator-port 6000 --broker-host 127.0.0.1 --broker-port 1099 --broker-bind BrokerService --broker-java-cp out
+
+Resultado esperado:
+- Servidor iniciado en 127.0.0.1:5001
+- Registrado con coordinador: slot=1, servidores registrados=2/2
+- Esperando cliente
+
+Nota:
+Al conectarse este servidor, el coordinador iniciará la cuenta regresiva cuando los clientes estén listos.
+
+TERMINAL 4: CLIENTE 1 (Conecta a Servidor 1)
+--------------------------------------------------------------------------------
+Ejecutar:
+python cliente.py a 2000 --host 127.0.0.1 --port 5000 --client-id ACCESO-01 --sale-id SALA-01 --coordinator-host 127.0.0.1 --coordinator-port 6000 --broker-host 127.0.0.1 --broker-port 1099 --broker-bind BrokerService --broker-java-cp out
+
+Resultado esperado:
+- Cliente conectado al servidor
+- Esperando señal GLOBAL_START
+
+TERMINAL 5: CLIENTE 2 (Conecta a Servidor 2)
+--------------------------------------------------------------------------------
+Ejecutar:
+python cliente.py a 1500 --host 127.0.0.1 --port 5001 --client-id ACCESO-02 --sale-id SALA-02 --coordinator-host 127.0.0.1 --coordinator-port 6000 --broker-host 127.0.0.1 --broker-port 1099 --broker-bind BrokerService --broker-java-cp out
+
+Resultado esperado:
+- Cliente conectado al servidor
+- Esperando señal GLOBAL_START
+
+EVENTO GLOBAL ESPERADO (TERMINAL 1)
+--------------------------------------------------------------------------------
+Cuando todos los componentes estén conectados:
+
+[Coordinador] Condición global cumplida. Iniciando cuenta regresiva...
+[Coordinador] Iniciando cuenta regresiva de 8 segundos antes de GLOBAL_START...
+[Countdown] 8...
+[Countdown] 7...
+[Countdown] 6...
+[Countdown] 5...
+[Countdown] 4...
+[Countdown] 3...
+[Countdown] 2...
+[Countdown] 1...
+[Countdown] 0 - ¡INICIANDO VENTAS GLOBALES!
+
+Posteriormente, las compras se ejecutarán en paralelo.
+
+DETENCIÓN DEL SISTEMA
+--------------------------------------------------------------------------------
+Ejecutar:
+Presionar Ctrl + C en cualquier terminal activa.
+
