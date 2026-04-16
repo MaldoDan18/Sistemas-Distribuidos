@@ -12,8 +12,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-SOCKET_TIMEOUT = 4.0
-MAX_ATTEMPTS_PER_BUYER = 250
+SOCKET_TIMEOUT = 20.0
 
 TIPO_PLATINO = "platino"
 TIPO_PREFERENTE = "preferente"
@@ -166,15 +165,13 @@ def buyer_worker(buyer_number: int, server_url: str, client_id: str, client_type
     purchased = False
     local_reserve_time = 0.0
     local_purchase_time = 0.0
-    attempts = 0
-    consecutive_errors = 0
+    retry_delay = 0.0
 
     while not sold_out_event.is_set():
-        attempts += 1
-        if attempts > MAX_ATTEMPTS_PER_BUYER:
-            break
-
-        time.sleep(random.uniform(0.02, 0.18))
+        if retry_delay > 0:
+            time.sleep(retry_delay)
+            retry_delay = 0.0
+        time.sleep(random.uniform(0.01, 0.06))
 
         reserve_payload = {
             "buyer_id": buyer_id,
@@ -187,12 +184,8 @@ def buyer_worker(buyer_number: int, server_url: str, client_id: str, client_type
         except Exception:
             with stats_lock:
                 metrics["network_errors"] += 1
-            consecutive_errors += 1
-            if consecutive_errors >= 15:
-                break
+            retry_delay = min(1.0, 0.1 if retry_delay == 0.0 else retry_delay * 1.3)
             continue
-
-        consecutive_errors = 0
 
         reserve_elapsed = time.perf_counter() - reserve_started
         local_reserve_time += reserve_elapsed
@@ -211,10 +204,11 @@ def buyer_worker(buyer_number: int, server_url: str, client_id: str, client_type
                 time.sleep(0.15)
                 continue
             if reserve_status == "error" and error_code == "no_zone_available":
-                time.sleep(0.12)
+                time.sleep(0.05)
                 continue
-            if error_code in {"sales_closed", "sold_limit_reached", "no_seats_available", "ticketing_unreachable", "sold_out"}:
+            if error_code in {"sales_closed", "sold_limit_reached", "sold_out"}:
                 break
+            retry_delay = min(1.0, 0.1 if retry_delay == 0.0 else retry_delay * 1.3)
             continue
 
         reservation = reserve_response.get("reservation") or {}
@@ -233,12 +227,8 @@ def buyer_worker(buyer_number: int, server_url: str, client_id: str, client_type
         except Exception:
             with stats_lock:
                 metrics["network_errors"] += 1
-            consecutive_errors += 1
-            if consecutive_errors >= 15:
-                break
+            retry_delay = min(1.0, 0.1 if retry_delay == 0.0 else retry_delay * 1.3)
             continue
-
-        consecutive_errors = 0
 
         purchase_elapsed = time.perf_counter() - purchase_started
         local_purchase_time += purchase_elapsed
@@ -261,16 +251,9 @@ def buyer_worker(buyer_number: int, server_url: str, client_id: str, client_type
         if purchase_status == "not_started":
             time.sleep(0.15)
             continue
-        if error_code in {
-            "sales_closed",
-            "sold_limit_reached",
-            "reservation_not_found",
-            "reservation_expired",
-            "ticketing_unreachable",
-            "ticketing_rejected",
-            "sold_out",
-        }:
+        if error_code in {"sales_closed", "sold_limit_reached", "sold_out"}:
             break
+        retry_delay = min(1.0, 0.1 if retry_delay == 0.0 else retry_delay * 1.3)
 
     buyer_total_elapsed = time.perf_counter() - buyer_started
 

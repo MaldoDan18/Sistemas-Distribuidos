@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import threading
 import time
 import tkinter as tk
@@ -22,8 +23,11 @@ from urllib.request import Request, urlopen
 
 FILAS = 30
 COLUMNAS = 50
-RESERVA_TTL_SEGUNDOS = 30.0
-COMPRA_GRACE_SEGUNDOS = 30.0
+RESERVA_TTL_SEGUNDOS = 10.0
+COMPRA_GRACE_SEGUNDOS = 8.0
+TICKETING_REQUEST_TIMEOUT = 4.0
+TICKETING_RETRY_ATTEMPTS = 4
+TICKETING_RETRY_BASE_DELAY = 0.2
 TOTAL_ASIENTOS = FILAS * COLUMNAS
 SECTION_GAP_ROWS = 2
 SECTION_LABEL_ROWS = 1
@@ -62,7 +66,7 @@ def build_zone_seats() -> dict[str, list[tuple[int, int]]]:
 	return zones
 
 
-def http_json_request(method: str, url: str, payload: dict[str, Any] | None = None, timeout: float = 4.0) -> dict[str, Any]:
+def http_json_request(method: str, url: str, payload: dict[str, Any] | None = None, timeout: float = TICKETING_REQUEST_TIMEOUT) -> dict[str, Any]:
 	body = None
 	headers = {}
 	if payload is not None:
@@ -87,7 +91,7 @@ def http_json_request(method: str, url: str, payload: dict[str, Any] | None = No
 
 
 class TicketingHTTPClient:
-	def __init__(self, base_url: str, timeout: float = 4.0):
+	def __init__(self, base_url: str, timeout: float = TICKETING_REQUEST_TIMEOUT):
 		self.base_url = base_url.rstrip("/")
 		self.timeout = timeout
 
@@ -96,7 +100,7 @@ class TicketingHTTPClient:
 
 
 class CoordinatorHTTPClient:
-	def __init__(self, base_url: str, timeout: float = 4.0):
+	def __init__(self, base_url: str, timeout: float = TICKETING_REQUEST_TIMEOUT):
 		self.base_url = base_url.rstrip("/")
 		self.timeout = timeout
 
@@ -268,12 +272,45 @@ class SaleState:
 		return ALLOWED_ZONES_BY_TYPE.get(normalized, [ZONA_NORMAL])
 
 	def _pick_seat(self, buyer_type: str) -> tuple[str, tuple[int, int]] | None:
+		candidates: list[tuple[str, tuple[int, int]]] = []
 		for zone in self._buyer_allowed_zones(buyer_type):
 			for seat in self.zone_seats[zone]:
 				row, col = seat
 				if self.seat_state[row][col] == "FREE":
-					return zone, seat
-		return None
+					candidates.append((zone, seat))
+		if not candidates:
+			return None
+		return random.choice(candidates)
+
+	def _release_reservation_locked(self, reservation_id: str) -> None:
+		reservation = self.reservations.pop(reservation_id, None)
+		if reservation is None:
+			return
+		row = reservation["seat"]["row"]
+		col = reservation["seat"]["col"]
+		self.seat_state[row][col] = "FREE"
+
+	def _create_ticket_with_retries(self, ticketing_client: TicketingHTTPClient, ticket_payload: dict[str, Any], reservation_id: str) -> dict[str, Any]:
+		last_error: Exception | None = None
+
+		for attempt in range(1, TICKETING_RETRY_ATTEMPTS + 1):
+			try:
+				return ticketing_client.create_ticket(ticket_payload)
+			except Exception as exc:
+				last_error = exc
+				if attempt >= TICKETING_RETRY_ATTEMPTS:
+					break
+
+				delay = min(TICKETING_RETRY_BASE_DELAY * (attempt - 1), 1.0)
+				if delay > 0:
+					time.sleep(delay)
+
+				with self.lock:
+					reservation = self.reservations.get(reservation_id)
+					if reservation is not None:
+						reservation["expires_at"] = time.time() + max(RESERVA_TTL_SEGUNDOS, COMPRA_GRACE_SEGUNDOS)
+
+		raise RuntimeError(f"ticketing_unreachable: {last_error}") from last_error
 
 	def _close_locked(self, reason: str) -> None:
 		if self.status == "closed":
@@ -365,13 +402,10 @@ class SaleState:
 			}
 
 		try:
-			ticket_response = ticketing_client.create_ticket(ticket_payload)
+			ticket_response = self._create_ticket_with_retries(ticketing_client, ticket_payload, reservation_id)
 		except Exception as exc:
 			with self.lock:
-				reservation = self.reservations.get(reservation_id)
-				if reservation is not None:
-					reservation["in_purchase"] = False
-					reservation["expires_at"] = time.time() + RESERVA_TTL_SEGUNDOS
+				self._release_reservation_locked(reservation_id)
 				self.purchase_fail_count += 1
 			raise RuntimeError(f"ticketing_unreachable: {exc}") from exc
 
@@ -386,8 +420,7 @@ class SaleState:
 				raise RuntimeError("reservation_owner_mismatch")
 
 			if ticket_response.get("status") != "ok" or not ticket_response.get("ticket_id"):
-				reservation["in_purchase"] = False
-				reservation["expires_at"] = time.time() + RESERVA_TTL_SEGUNDOS
+				self._release_reservation_locked(reservation_id)
 				self.purchase_fail_count += 1
 				raise RuntimeError("ticketing_rejected")
 
