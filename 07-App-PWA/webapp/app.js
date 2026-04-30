@@ -127,8 +127,31 @@ async function registerPWA(){
 
 function renderSeats(){
   seatMap.innerHTML = '';
+  
+  // Determine grid columns based on max columns
+  const cols = 50; // COLUMNAS from server
+  seatMap.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  
+  const rowsPerSection = [3, 4, 23]; // PLATINO, PREFERENTE, NORMAL (rows 0-2, 3-6, 7-29)
+  const sectionNames = ['SECCIÓN PLATINO', 'SECCIÓN PREFERENTE', 'SECCIÓN NORMAL'];
+  const sectionStartRows = [0, 3, 7];
+  let currentSectionIdx = 0;
+  let nextSectionStartRow = sectionStartRows[1];
+  
   for(let r=0;r<availability.length;r++){
-    for(let c=0;c<availability[r].length;c++){
+    // Add section header when entering a new section
+    if(currentSectionIdx < sectionNames.length && r === sectionStartRows[currentSectionIdx]){
+      const label = document.createElement('div');
+      label.classList.add('section-label');
+      label.textContent = sectionNames[currentSectionIdx];
+      seatMap.appendChild(label);
+      if(currentSectionIdx < sectionNames.length - 1){
+        currentSectionIdx++;
+        nextSectionStartRow = sectionStartRows[currentSectionIdx];
+      }
+    }
+    
+    for(let c=0;c<Math.min(availability[r].length, cols);c++){
       const cell = document.createElement('div');
       cell.classList.add('seat');
       const state = availability[r][c];

@@ -257,16 +257,15 @@ class TicketState:
         if self.sales_closed_event.is_set() or not self.sales_open_event.is_set():
             return False
         if self.sold_count >= TOTAL_ASIENTOS:
-            return False
-        if self._is_sale_still_possible_locked():
-            return False
-
-        if self.sales_finished_at is None:
-            self.sales_finished_at = time.perf_counter()
-        self.close_reason = "unsellable_remaining"
-        self.sales_closed_event.set()
-        self.sold_out_event.set()
-        return True
+            # Only close if ALL seats are sold
+            if self.sales_finished_at is None:
+                self.sales_finished_at = time.perf_counter()
+            self.close_reason = "all_seats_sold"
+            self.sales_closed_event.set()
+            self.sold_out_event.set()
+            return True
+        # Do NOT close for unsellable_remaining; let coordinator or Ctrl+C terminate
+        return False
 
     def _cleanup_expired_zone_locked(self, zone):
         now = time.monotonic()
@@ -673,7 +672,12 @@ class TicketServer(socketserver.ThreadingTCPServer):
             }
             self.ticket_state.register_client_buyers(client_type, buyers_count)
             connected = len(self.connected_clients)
-            return connected
+        
+        # Notificar al coordinador si existe
+        if self.coordinator_client is not None:
+            self.coordinator_client.notify_client_connected(self.sale_id, client_id, buyers_count)
+        
+        return connected
 
     def mark_ready(self, client_id):
         all_ready = False
@@ -707,19 +711,14 @@ class TicketServer(socketserver.ThreadingTCPServer):
             print("Señal START enviada. ¡Venta abierta!")
 
     def mark_client_done(self, client_id):
-        should_close = False
         with self.registration_lock:
             self.done_clients.add(client_id)
             done_count = len(self.done_clients)
-
-            if self.start_event.is_set() and done_count >= self.expected_clients:
-                should_close = True
-
-        if should_close:
-            self.ticket_state.close_sales("all_clients_done")
-            with self.ticket_state.terminal_lock:
-                print("Todos los clientes reportaron fin de ejecución. Venta cerrada.")
-
+        
+        # Do NOT close the sale automatically; only Ctrl+C will terminate
+        with self.ticket_state.terminal_lock:
+            print(f"Cliente {client_id} reportó fin de ejecución ({done_count}/{self.expected_clients})")
+        
         return done_count
 
 
@@ -764,6 +763,15 @@ class CoordinatorClient:
         with self.write_lock:
             self.sock_file.write((json.dumps(payload) + "\n").encode("utf-8"))
             self.sock_file.flush()
+
+    def notify_client_connected(self, sale_id, client_id, buyers_count):
+        """Notifica al coordinador que un cliente se ha conectado."""
+        self._send({
+            "type": "CLIENT_CONNECTED",
+            "sale_id": sale_id,
+            "client_id": client_id,
+            "buyers": int(buyers_count),
+        })
 
     def _listen_loop(self):
         try:
