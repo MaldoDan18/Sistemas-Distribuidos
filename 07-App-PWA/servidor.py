@@ -9,6 +9,10 @@ import threading
 import time
 import tkinter as tk
 import uuid
+try:
+    from flask import Flask, request, jsonify, make_response
+except Exception:
+    Flask = None
 
 FILAS = 30
 COLUMNAS = 50
@@ -608,11 +612,57 @@ class TicketServer(socketserver.ThreadingTCPServer):
         self.all_ready_event = threading.Event()
         self.global_start_event = threading.Event()
         self.coordinator_client = None
+        self.countdown_started_at = None
+        self.countdown_duration = 0.0
         if not self.use_global_sync:
             self.global_start_event.set()
 
     def set_coordinator_client(self, coordinator_client):
         self.coordinator_client = coordinator_client
+
+    def begin_countdown(self, duration_seconds=5.0):
+        with self.registration_lock:
+            self.countdown_started_at = time.perf_counter()
+            self.countdown_duration = float(duration_seconds)
+
+    def get_sale_status(self):
+        with self.registration_lock:
+            countdown_started_at = self.countdown_started_at
+            countdown_duration = self.countdown_duration
+            connected_clients = len(self.connected_clients)
+            ready_clients = len(self.ready_clients)
+            done_clients = len(self.done_clients)
+
+        sales_open = self.ticket_state.sales_open()
+        sales_closed = self.ticket_state.sales_closed()
+
+        if sales_closed:
+            state = "closed"
+        elif sales_open:
+            state = "open"
+        elif countdown_started_at is not None:
+            state = "countdown"
+        else:
+            state = "waiting"
+
+        countdown_remaining = None
+        if state == "countdown":
+            elapsed = time.perf_counter() - countdown_started_at
+            countdown_remaining = max(0.0, countdown_duration - elapsed)
+
+        return {
+            "state": state,
+            "sales_open": sales_open,
+            "sales_closed": sales_closed,
+            "countdown_started": countdown_started_at is not None,
+            "countdown_duration": countdown_duration,
+            "countdown_remaining": countdown_remaining,
+            "connected_clients": connected_clients,
+            "ready_clients": ready_clients,
+            "done_clients": done_clients,
+            "expected_clients": self.expected_clients,
+            "use_global_sync": self.use_global_sync,
+        }
 
     def register_client(self, client_id, client_type, buyers_count):
         with self.registration_lock:
@@ -651,6 +701,7 @@ class TicketServer(socketserver.ThreadingTCPServer):
             if self.start_event.is_set():
                 return
             self.start_event.set()
+            self.countdown_started_at = None
         self.ticket_state.open_sales()
         with self.ticket_state.terminal_lock:
             print("Señal START enviada. ¡Venta abierta!")
@@ -1179,6 +1230,7 @@ class ServerDashboard:
         if self.countdown_active:
             return
         self.countdown_active = True
+        self.server.begin_countdown(5.0)
         self.waiting_label.config(text="\u00a1Todos los clientes listos!")
         self.waiting_sublabel.config(text="La venta inicia en 5 segundos...")
         self.countdown_start = time.time()
@@ -1317,6 +1369,84 @@ def parse_args():
     return parser.parse_args()
 
 
+# --- Minimal HTTP API (Flask) to serve PWA without touching socket protocol ---
+def create_api(ticket_state, server):
+    if Flask is None:
+        return None
+    app = Flask(__name__)
+
+    @app.after_request
+    def add_cors(resp):
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        resp.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+        return resp
+
+    @app.route('/api/availability', methods=['GET'])
+    def availability():
+        snap = ticket_state.get_snapshot()
+        snap['sale_status'] = server.get_sale_status()
+        return jsonify(snap)
+
+    @app.route('/api/register_client', methods=['POST'])
+    def api_register_client():
+        data = request.get_json() or {}
+        client_id = data.get('client_id')
+        client_type = data.get('client_type', TIPO_NORMAL)
+        buyers = int(data.get('buyers', 1))
+        if not client_id:
+            return jsonify({'type': 'ERROR', 'code': 'missing_client_id'}), 400
+        try:
+            connected = server.register_client(client_id, client_type, buyers)
+            return jsonify({'type': 'REGISTERED', 'client_id': client_id, 'connected_clients': connected, 'expected_clients': server.expected_clients})
+        except Exception as exc:
+            return jsonify({'type': 'ERROR', 'message': str(exc)}), 500
+
+    @app.route('/api/ready', methods=['POST'])
+    def api_ready():
+        data = request.get_json() or {}
+        client_id = data.get('client_id')
+        if not client_id:
+            return jsonify({'type': 'ERROR', 'code': 'missing_client_id'}), 400
+        try:
+            ready_count = server.mark_ready(client_id)
+            # start countdown locally when all ready (Server will set events)
+            return jsonify({'type': 'START_ACK', 'client_id': client_id, 'ready_clients': ready_count, 'expected_clients': server.expected_clients})
+        except Exception as exc:
+            return jsonify({'type': 'ERROR', 'message': str(exc)}), 500
+
+    @app.route('/api/request_ticket', methods=['POST'])
+    def api_request_ticket():
+        data = request.get_json() or {}
+        buyer_id = data.get('buyer_id')
+        buyer_type = data.get('buyer_type', TIPO_NORMAL)
+        request_id = data.get('request_id') or str(uuid.uuid4())
+        resp = ticket_state.request_ticket(buyer_id, buyer_type, request_id)
+        return jsonify(resp)
+
+    @app.route('/api/purchase', methods=['POST'])
+    def api_purchase():
+        data = request.get_json() or {}
+        buyer_id = data.get('buyer_id')
+        reservation_id = data.get('reservation_id')
+        request_id = data.get('request_id') or str(uuid.uuid4())
+        resp = ticket_state.purchase(buyer_id, reservation_id, request_id)
+        return jsonify(resp)
+
+    return app
+
+def run_api_thread(app, host='127.0.0.1', port=5001):
+    if app is None:
+        print('[API] Flask not available; API endpoints disabled. Install Flask to enable API.')
+        return None
+    def _run():
+        app.run(host=host, port=port, threaded=True)
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    print(f'[API] HTTP API running on {host}:{port}')
+    return t
+
+
 def main():
     args = parse_args()
     if args.expected_clients <= 0:
@@ -1356,6 +1486,9 @@ def main():
         coordinator_client.start()
         server.set_coordinator_client(coordinator_client)
 
+    api_app = create_api(ticket_state, server)
+    run_api_thread(api_app, host=args.host, port=5001)
+
     monitor_thread = threading.Thread(target=monitor_sold_out, args=(ticket_state, coordinator_client), daemon=True)
     monitor_thread.start()
 
@@ -1379,6 +1512,7 @@ def main():
                 server.global_start_event.wait()
             else:
                 server.all_ready_event.wait()
+            server.begin_countdown(5.0)
             for i in range(5, 0, -1):
                 print(f"  Iniciando en {i}...")
                 time.sleep(1)

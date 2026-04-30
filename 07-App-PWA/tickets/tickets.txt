@@ -1,0 +1,1 @@
+{"ticket_id": "TKT-1C362E7594AD", "created_at": "2026-04-29T22:06:18", "sale_id": "127.0.0.1:5000", "buyer_id": "NORMAL-6a4794-B1", "buyer_type": "normal", "zone": "NORMAL", "seat": {"row": 28, "col": 14}, "reservation_id": "18522295-6381-40e0-9091-3b608047d7e1", "request_id": "e21396cb-e794-4c3b-9331-292d20fff337", "server_host": "127.0.0.1", "server_port": 5000}
