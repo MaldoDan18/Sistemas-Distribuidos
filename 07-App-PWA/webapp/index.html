@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Simulación Venta - PWA</title>
+  <link rel="manifest" href="/webapp/manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Venta de Boletos — Cliente PWA</h1>
+    <div id="controls">
+      <label for="buyerType">Tipo de comprador:</label>
+      <select id="buyerType">
+        <option value="platino">Platino</option>
+        <option value="preferente">Preferente</option>
+        <option value="normal">General</option>
+      </select>
+      <button id="refreshBtn">Actualizar</button>
+      <button id="openCartBtn">Ver carrito (<span id="cartCount">0</span>)</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="mapSection">
+      <h2>Mapa de Asientos</h2>
+      <div id="seatMap">Cargando...</div>
+    </section>
+
+    <aside id="cartPanel" class="hidden">
+      <h3>Carrito</h3>
+      <ul id="cartList"></ul>
+      <button id="buyAllBtn">Comprar seleccionados</button>
+      <button id="clearCartBtn">Vaciar carrito</button>
+    </aside>
+
+    <section id="logSection">
+      <h3>Actividad</h3>
+      <div id="log"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
