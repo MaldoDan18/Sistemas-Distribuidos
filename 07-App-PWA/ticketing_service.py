@@ -1,4 +1,4 @@
-# Practica 6 - Ticketing Service
+# Practica 7 - PWA
 
 import argparse
 import json
