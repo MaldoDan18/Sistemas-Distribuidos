@@ -68,8 +68,15 @@ function updateSaleOverlay(){
   }
 
   if(state === 'closed'){
-    saleOverlayTitle.textContent = 'Venta cerrada';
-    saleOverlayText.textContent = 'La simulación terminó y ya no se aceptan nuevas reservas.';
+    saleOverlayTitle.textContent = '✓ La venta ha concluido';
+    const reason = saleStatus.close_reason || 'unknown';
+    if(reason === 'all_sold'){
+      saleOverlayText.textContent = 'Todos los asientos se vendieron exitosamente.';
+    } else if(reason === 'all_clients_done'){
+      saleOverlayText.textContent = 'La venta terminó cuando los clientes completaron su operación.';
+    } else {
+      saleOverlayText.textContent = 'La simulación ha finalizado.';
+    }
     saleOverlayTimer.textContent = '';
     return;
   }
@@ -174,16 +181,18 @@ function renderSeats(){
 }
 
 async function onSeatClick(evt){
-  const row = parseInt(evt.currentTarget.dataset.row,10);
-  const col = parseInt(evt.currentTarget.dataset.col,10);
+  const row = parseInt(evt.currentTarget.dataset.row, 10);
+  const col = parseInt(evt.currentTarget.dataset.col, 10);
   const buyerType = buyerTypeEl.value;
 
-  // Send request_ticket to server
+  // Send request_ticket to server with specific seat coordinates
   const payload = {
     type: 'REQUEST_TICKET',
     buyer_id: localBuyerId,
     buyer_type: buyerType,
     request_id: cryptoRandomId(),
+    row: row,
+    col: col,
   };
 
   try{
@@ -195,11 +204,11 @@ async function onSeatClick(evt){
       const entry = { reservation_id: data.reservation_id, seat: data.seat, zone: data.zone, status: 'reserved', ttl_seconds: data.ttl_seconds };
       cart.push(entry);
       localStorage.setItem('pwa_cart', JSON.stringify(cart));
-      log(`Reserva OK ${entry.seat.row}-${entry.seat.col} id=${entry.reservation_id}`);
+      log(`Reserva OK asiento ${entry.seat.row}-${entry.seat.col} id=${entry.reservation_id}`);
       updateCartUI();
       renderSeats();
     } else {
-      log('Reserva rechazada: ' + JSON.stringify(data));
+      log('Reserva rechazada: ' + (data.message || JSON.stringify(data)));
     }
   }catch(err){
     log('Error en reserva: '+err.message);
@@ -251,11 +260,12 @@ function startPolling(){
 
 // service worker registration
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('/webapp/sw.js').then(()=>console.log('sw registered')).catch(()=>console.log('sw failed'));
+  navigator.serviceWorker.register('sw.js').then(()=>console.log('sw registered')).catch(()=>console.log('sw failed'));
 }
 
 // init
 updateCartUI();
 updateSaleOverlay();
+registerPWA();  // Register as client BEFORE fetching availability
 fetchAvailability();
 startPolling();

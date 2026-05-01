@@ -17,7 +17,7 @@ except Exception:
 FILAS = 30
 COLUMNAS = 50
 TOTAL_ASIENTOS = FILAS * COLUMNAS
-RESERVA_TTL_SEGUNDOS = 1.0
+RESERVA_TTL_SEGUNDOS = 5.0
 SECTION_GAP_ROWS = 2
 SECTION_LABEL_ROWS = 1
 
@@ -260,7 +260,7 @@ class TicketState:
             # Only close if ALL seats are sold
             if self.sales_finished_at is None:
                 self.sales_finished_at = time.perf_counter()
-            self.close_reason = "all_seats_sold"
+            self.close_reason = "all_sold"
             self.sales_closed_event.set()
             self.sold_out_event.set()
             return True
@@ -297,7 +297,7 @@ class TicketState:
                 with self.terminal_lock:
                     print(f"Actualización: {porcentaje}% de boletos vendidos ({self.sold_count}/{TOTAL_ASIENTOS}).")
 
-    def request_ticket(self, buyer_id, buyer_type, request_id):
+    def request_ticket(self, buyer_id, buyer_type, request_id, specific_row=None, specific_col=None):
         started = time.perf_counter()
 
         if self.sales_closed_event.is_set():
@@ -315,6 +315,67 @@ class TicketState:
         with self.meta_lock:
             self.metrics["request_ticket_count"] += 1
 
+        # If specific seat is requested, try that first
+        if specific_row is not None and specific_col is not None:
+            try:
+                row = int(specific_row)
+                col = int(specific_col)
+                if 0 <= row < FILAS and 0 <= col < COLUMNAS:
+                    # Determine zone for this seat
+                    if row <= 2:
+                        seat_zone = ZONA_PLATINO
+                    elif row <= 6:
+                        seat_zone = ZONA_PREFERENTE
+                    else:
+                        seat_zone = ZONA_NORMAL
+                    
+                    # Check if user type can access this zone
+                    if seat_zone not in zones:
+                        with self.meta_lock:
+                            self.metrics["request_ticket_time_total"] += time.perf_counter() - started
+                        return {"status": "error", "code": "zone_not_allowed", "message": f"Tu tipo de comprador no puede acceder a la zona {seat_zone}."}
+                    
+                    zone_lock = self.zone_locks[seat_zone]
+                    acquired = zone_lock.acquire(timeout=0.05)
+                    if not acquired:
+                        with self.meta_lock:
+                            self.metrics["request_ticket_time_total"] += time.perf_counter() - started
+                        return {"status": "error", "code": "zone_busy", "message": "Zona ocupada, intenta de nuevo."}
+                    
+                    try:
+                        self._cleanup_expired_zone_locked(seat_zone)
+                        if self.seat_status[row][col] == "FREE":
+                            reservation_id = str(uuid.uuid4())
+                            self.seat_status[row][col] = "RESERVED"
+                            self.reservations_by_zone[seat_zone][reservation_id] = {
+                                "buyer_id": str(buyer_id),
+                                "buyer_type": (buyer_type or TIPO_NORMAL).lower(),
+                                "seat": (row, col),
+                                "zone": seat_zone,
+                                "expires_at": time.monotonic() + RESERVA_TTL_SEGUNDOS,
+                                "request_id": request_id,
+                            }
+                            with self.meta_lock:
+                                self.reservation_to_zone[reservation_id] = seat_zone
+                                self.metrics["request_ticket_ok"] += 1
+                                self.metrics["request_ticket_time_total"] += time.perf_counter() - started
+                            return {
+                                "status": "ok",
+                                "reservation_id": reservation_id,
+                                "zone": seat_zone,
+                                "seat": {"row": row, "col": col},
+                                "ttl_seconds": RESERVA_TTL_SEGUNDOS,
+                            }
+                        else:
+                            with self.meta_lock:
+                                self.metrics["request_ticket_time_total"] += time.perf_counter() - started
+                            return {"status": "error", "code": "seat_not_available", "message": f"El asiento {row}-{col} no está disponible."}
+                    finally:
+                        zone_lock.release()
+            except (ValueError, TypeError):
+                pass
+        
+        # Fall back to random seat selection
         for zone in zones:
             zone_lock = self.zone_locks[zone]
             acquired = zone_lock.acquire(timeout=0.02)
@@ -649,10 +710,12 @@ class TicketServer(socketserver.ThreadingTCPServer):
             elapsed = time.perf_counter() - countdown_started_at
             countdown_remaining = max(0.0, countdown_duration - elapsed)
 
+        close_reason = self.ticket_state.close_reason if sales_closed else None
         return {
             "state": state,
             "sales_open": sales_open,
             "sales_closed": sales_closed,
+            "close_reason": close_reason,
             "countdown_started": countdown_started_at is not None,
             "countdown_duration": countdown_duration,
             "countdown_remaining": countdown_remaining,
@@ -1429,7 +1492,9 @@ def create_api(ticket_state, server):
         buyer_id = data.get('buyer_id')
         buyer_type = data.get('buyer_type', TIPO_NORMAL)
         request_id = data.get('request_id') or str(uuid.uuid4())
-        resp = ticket_state.request_ticket(buyer_id, buyer_type, request_id)
+        specific_row = data.get('row')
+        specific_col = data.get('col')
+        resp = ticket_state.request_ticket(buyer_id, buyer_type, request_id, specific_row, specific_col)
         return jsonify(resp)
 
     @app.route('/api/purchase', methods=['POST'])
@@ -1533,6 +1598,8 @@ def main():
             server.serve_forever()
         except KeyboardInterrupt:
             print("\n[Servidor] Interrupción recibida. Cerrando servidor...")
+            if not ticket_state.sales_closed():
+                ticket_state.close_sales("interrupted")
         finally:
             server.shutdown()
             server.server_close()
@@ -1549,6 +1616,8 @@ def main():
         dashboard.run()
     except tk.TclError:
         print("[Servidor] No fue posible iniciar la interfaz. Ejecuta con --no-gui o revisa tu entorno gráfico.")
+        if not ticket_state.sales_closed():
+            ticket_state.close_sales("interface_error")
         server.shutdown()
         server.server_close()
         if coordinator_client is not None:
@@ -1556,6 +1625,8 @@ def main():
         ticket_state.print_summary_once()
     except KeyboardInterrupt:
         print("\n[Servidor] Interrupción recibida. Cerrando servidor...")
+        if not ticket_state.sales_closed():
+            ticket_state.close_sales("interrupted")
         server.shutdown()
         server.server_close()
         if coordinator_client is not None:
