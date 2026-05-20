@@ -345,6 +345,10 @@ def buyer_worker(local_buyer_number, host, port, client_id, client_type):
         if not reservation_id:
             continue
 
+        payment_pause = random.uniform(1.0, 5.0)
+        time.sleep(payment_pause)
+        wait_random_accum += payment_pause
+
         purchase_payload = {
             "type": "PURCHASE",
             "request_id": str(uuid.uuid4()),
