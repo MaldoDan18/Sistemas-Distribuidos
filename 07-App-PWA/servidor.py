@@ -966,33 +966,54 @@ class TicketRequestHandler(socketserver.StreamRequestHandler):
             if message_type == "REQUEST_TICKET":
                 buyer_id = payload.get("buyer_id")
                 buyer_type = payload.get("buyer_type", TIPO_NORMAL)
-                response = self.server.ticket_state.request_ticket(buyer_id, buyer_type, request_id)
-                response["type"] = "REQUEST_TICKET_RESPONSE"
-                self.send_json(response)
+                # Forward to ticketing authority
+                try:
+                    req = {"type": "REQUEST_TICKET", "buyer_id": buyer_id, "buyer_type": buyer_type, "request_id": request_id}
+                    resp = send_json_request(self.server.ticket_service_host, self.server.ticket_service_port, req)
+                    resp["type"] = "REQUEST_TICKET_RESPONSE"
+                    self.send_json(resp)
+                except Exception as exc:
+                    self.send_json({"type": "REQUEST_TICKET_RESPONSE", "status": "error", "code": "ticket_service_unavailable", "message": str(exc)})
                 continue
 
             if message_type == "PURCHASE":
                 buyer_id = payload.get("buyer_id")
                 reservation_id = payload.get("reservation_id")
-                response = self.server.ticket_state.purchase(buyer_id, reservation_id, request_id)
-                response["type"] = "PURCHASE_RESPONSE"
-                self.send_json(response)
+                try:
+                    req = {
+                        "type": "PURCHASE",
+                        "buyer_id": buyer_id,
+                        "reservation_id": reservation_id,
+                        "request_id": request_id,
+                        "sale_id": getattr(self.server, 'sale_id', None),
+                        "server_host": getattr(self.server, 'server_address', (None, None))[0] if hasattr(self.server, 'server_address') else None,
+                        "server_port": getattr(self.server, 'server_address', (None, None))[1] if hasattr(self.server, 'server_address') else None,
+                    }
+                    resp = send_json_request(self.server.ticket_service_host, self.server.ticket_service_port, req)
+                    resp["type"] = "PURCHASE_RESPONSE"
+                    self.send_json(resp)
+                except Exception as exc:
+                    self.send_json({"type": "PURCHASE_RESPONSE", "status": "error", "code": "ticket_service_unavailable", "message": str(exc)})
                 continue
 
             if message_type == "HEALTH":
-                snapshot = self.server.ticket_state.get_snapshot()
-                self.send_json({
-                    "type": "HEALTH_RESPONSE",
-                    "status": "ok",
-                    "total_seats": TOTAL_ASIENTOS,
-                    "sales_open": self.server.ticket_state.sales_open(),
-                    "sales_closed": self.server.ticket_state.sales_closed(),
-                    "connected_clients": len(self.server.connected_clients),
-                    "ready_clients": len(self.server.ready_clients),
-                    "done_clients": len(self.server.done_clients),
-                    "expected_clients": self.server.expected_clients,
-                    "sold_count": snapshot["sold_count"],
-                })
+                try:
+                    resp = send_json_request(self.server.ticket_service_host, self.server.ticket_service_port, {"type": "AVAILABILITY"})
+                    sold = resp.get('sold_count', 0)
+                    self.send_json({
+                        "type": "HEALTH_RESPONSE",
+                        "status": "ok",
+                        "total_seats": TOTAL_ASIENTOS,
+                        "sales_open": True,
+                        "sales_closed": sold >= TOTAL_ASIENTOS,
+                        "connected_clients": len(self.server.connected_clients),
+                        "ready_clients": len(self.server.ready_clients),
+                        "done_clients": len(self.server.done_clients),
+                        "expected_clients": self.server.expected_clients,
+                        "sold_count": sold,
+                    })
+                except Exception as exc:
+                    self.send_json({"type": "ERROR", "code": "ticket_service_unavailable", "message": str(exc)})
                 continue
 
             if message_type == "CLIENT_DONE":
@@ -1441,7 +1462,7 @@ def parse_args():
 
 
 # --- Minimal HTTP API (Flask) to serve PWA without touching socket protocol ---
-def create_api(ticket_state, server):
+def create_api(ticket_state, server, ticket_service_host=None, ticket_service_port=None):
     if Flask is None:
         return None
     app = Flask(__name__)
@@ -1455,9 +1476,18 @@ def create_api(ticket_state, server):
 
     @app.route('/api/availability', methods=['GET'])
     def availability():
-        snap = ticket_state.get_snapshot()
-        snap['sale_status'] = server.get_sale_status()
-        return jsonify(snap)
+        try:
+            payload = {"type": "AVAILABILITY"}
+            resp = send_json_request(ticket_service_host, ticket_service_port, payload)
+            # Build response similar to previous API: seat_status + sale_status
+            seat_status = resp.get('seat_status')
+            sold = resp.get('sold_count', 0)
+            sale_status = {"state": "open", "sales_open": True, "sales_closed": False}
+            if sold >= TOTAL_ASIENTOS:
+                sale_status = {"state": "closed", "sales_open": False, "sales_closed": True, "close_reason": "all_sold"}
+            return jsonify({"seat_status": seat_status, "sale_status": sale_status})
+        except Exception as exc:
+            return make_response(jsonify({"error": "ticket_service_unavailable", "message": str(exc)}), 503)
 
     @app.route('/api/register_client', methods=['POST'])
     def api_register_client():
@@ -1494,8 +1524,19 @@ def create_api(ticket_state, server):
         request_id = data.get('request_id') or str(uuid.uuid4())
         specific_row = data.get('row')
         specific_col = data.get('col')
-        resp = ticket_state.request_ticket(buyer_id, buyer_type, request_id, specific_row, specific_col)
-        return jsonify(resp)
+        payload = {
+            "type": "REQUEST_TICKET",
+            "buyer_id": buyer_id,
+            "buyer_type": buyer_type,
+            "request_id": request_id,
+        }
+        if specific_row is not None and specific_col is not None:
+            payload.update({"row": specific_row, "col": specific_col})
+        try:
+            resp = send_json_request(ticket_service_host, ticket_service_port, payload)
+            return jsonify(resp)
+        except Exception as exc:
+            return make_response(jsonify({"status": "error", "code": "ticket_service_unavailable", "message": str(exc)}), 503)
 
     @app.route('/api/purchase', methods=['POST'])
     def api_purchase():
@@ -1503,8 +1544,20 @@ def create_api(ticket_state, server):
         buyer_id = data.get('buyer_id')
         reservation_id = data.get('reservation_id')
         request_id = data.get('request_id') or str(uuid.uuid4())
-        resp = ticket_state.purchase(buyer_id, reservation_id, request_id)
-        return jsonify(resp)
+        payload = {
+            "type": "PURCHASE",
+            "buyer_id": buyer_id,
+            "reservation_id": reservation_id,
+            "request_id": request_id,
+            "sale_id": getattr(server, 'sale_id', None),
+            "server_host": getattr(server, 'server_address', (None, None))[0] if hasattr(server, 'server_address') else None,
+            "server_port": getattr(server, 'server_address', (None, None))[1] if hasattr(server, 'server_address') else None,
+        }
+        try:
+            resp = send_json_request(ticket_service_host, ticket_service_port, payload)
+            return jsonify(resp)
+        except Exception as exc:
+            return make_response(jsonify({"status": "error", "code": "ticket_service_unavailable", "message": str(exc)}), 503)
 
     return app
 
@@ -1543,6 +1596,9 @@ def main():
         sale_id,
         use_global_sync=use_global_sync,
     )
+    # Configure ticketing authority address on server for forwarding
+    server.ticket_service_host = args.ticket_service_host
+    server.ticket_service_port = args.ticket_service_port
     coordinator_client = None
 
     if use_global_sync:
@@ -1559,14 +1615,11 @@ def main():
         coordinator_client.start()
         server.set_coordinator_client(coordinator_client)
 
-    api_app = create_api(ticket_state, server)
+    api_app = create_api(ticket_state, server, ticket_service_host=args.ticket_service_host, ticket_service_port=args.ticket_service_port)
     run_api_thread(api_app, host=args.host, port=5001)
 
-    monitor_thread = threading.Thread(target=monitor_sold_out, args=(ticket_state, coordinator_client), daemon=True)
-    monitor_thread.start()
-
-    cleanup_thread = threading.Thread(target=cleanup_expired_reservations, args=(ticket_state,), daemon=True)
-    cleanup_thread.start()
+    # Server no longer manages seat lifecycle locally; ticketing authority is responsible.
+    # (monitor and cleanup threads disabled for gateway mode)
 
     print("Servidor de boletos iniciado")
     print(f"Escuchando en {args.host}:{args.port}")
