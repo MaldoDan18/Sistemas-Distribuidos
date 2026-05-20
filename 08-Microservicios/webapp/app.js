@@ -25,6 +25,12 @@ let localClientId = localStorage.getItem('pwa_client_id') || `PWA-CLIENT-${Math.
 if (!localStorage.getItem('pwa_client_id')) localStorage.setItem('pwa_client_id', localClientId);
 let pollingHandle = null;
 
+const SECTION_RULES = [
+  { name: 'SECCIÓN PLATINO', rowStart: 0, rowEnd: 2, className: 'section-platino' },
+  { name: 'SECCIÓN PREFERENTE', rowStart: 3, rowEnd: 6, className: 'section-preferente' },
+  { name: 'SECCIÓN NORMAL', rowStart: 7, rowEnd: 29, className: 'section-normal' },
+];
+
 function log(msg){
   const p = document.createElement('div');
   p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -93,6 +99,14 @@ function updateSaleOverlay(){
   saleOverlayTimer.textContent = '';
 }
 
+function getSectionForRow(row){
+  return SECTION_RULES.find(section => row >= section.rowStart && row <= section.rowEnd) || SECTION_RULES[SECTION_RULES.length - 1];
+}
+
+function getLocalReservationForSeat(row, col){
+  return cart.find(entry => entry.seat && entry.seat.row === row && entry.seat.col === col);
+}
+
 async function fetchAvailability(){
   try{
     const res = await fetch(API_BASE + '/api/availability');
@@ -134,40 +148,41 @@ async function registerPWA(){
 
 function renderSeats(){
   seatMap.innerHTML = '';
-  
-  // Determine grid columns based on max columns
   const cols = 50; // COLUMNAS from server
   seatMap.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  
-  const rowsPerSection = [3, 4, 23]; // PLATINO, PREFERENTE, NORMAL (rows 0-2, 3-6, 7-29)
-  const sectionNames = ['SECCIÓN PLATINO', 'SECCIÓN PREFERENTE', 'SECCIÓN NORMAL'];
-  const sectionStartRows = [0, 3, 7];
-  let currentSectionIdx = 0;
-  let nextSectionStartRow = sectionStartRows[1];
-  
+
+  let currentSectionName = null;
+
   for(let r=0;r<availability.length;r++){
-    // Add section header when entering a new section
-    if(currentSectionIdx < sectionNames.length && r === sectionStartRows[currentSectionIdx]){
+    const section = getSectionForRow(r);
+
+    if(section.name !== currentSectionName){
       const label = document.createElement('div');
       label.classList.add('section-label');
-      label.textContent = sectionNames[currentSectionIdx];
+      label.classList.add(section.className);
+      label.textContent = section.name;
       seatMap.appendChild(label);
-      if(currentSectionIdx < sectionNames.length - 1){
-        currentSectionIdx++;
-        nextSectionStartRow = sectionStartRows[currentSectionIdx];
-      }
+      currentSectionName = section.name;
     }
     
     for(let c=0;c<Math.min(availability[r].length, cols);c++){
       const cell = document.createElement('div');
       cell.classList.add('seat');
+      cell.classList.add(section.className);
       const state = availability[r][c];
-      if(state === 'FREE') cell.classList.add('free');
-      else if(state === 'RESERVED') cell.classList.add('reserved');
-      else cell.classList.add('sold');
-      // annotate if seat is in cart
-      const inCart = cart.find(x => x.seat.row===r && x.seat.col===c && x.status!=='sold');
-      if(inCart) cell.classList.add('mine');
+      const localReservation = getLocalReservationForSeat(r, c);
+
+      if(state === 'FREE'){
+        cell.classList.add('free');
+      } else if(state === 'RESERVED'){
+        if(localReservation && localReservation.status !== 'sold'){
+          cell.classList.add('reserved-mine');
+        } else {
+          cell.classList.add('reserved-other');
+        }
+      } else {
+        cell.classList.add('sold');
+      }
 
       cell.textContent = `${r}-${c}`;
       cell.dataset.row = r;

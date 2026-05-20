@@ -6,12 +6,25 @@ main { display:flex; gap:12px; padding: 12px; }
 #mapSection { flex: 1; }
 #seatMap { display:grid; grid-template-columns: repeat(20, 1fr); gap:3px; background: #fff; padding: 8px; border-radius:6px; max-height: 70vh; overflow:auto; }
 .seat { padding:6px; text-align:center; border-radius:4px; cursor:pointer; user-select:none; font-size:12px; }
-.free { background:#e6f4ea; border:1px solid #c6e7cf; }
-.reserved { background:#4a90e2; border:1px solid #357abd; color:white; }
-.sold { background:#4a90e2; border:1px solid #357abd; color:white; cursor:not-allowed; }
 
-.section-label { grid-column: 1 / -1; text-align: center; padding: 8px; font-weight: bold; font-size: 14px; background: #f0f0f0; border: 1px solid #ddd; margin: 0; }
-.mine { outline:3px solid #2b6cb0; }
+.section-platino.free { background:#d8ecff; border:1px solid #9dc9f3; color:#0f172a; }
+.section-preferente.free { background:#ffe6cc; border:1px solid #f4c28b; color:#0f172a; }
+.section-normal.free { background:#dff3df; border:1px solid #9fd19f; color:#0f172a; }
+
+.reserved-mine { background:#37a5f3; border:1px solid #1f7fc9; color:white; box-shadow:0 0 0 2px rgba(55, 165, 243, 0.18) inset; }
+.reserved-other { background:#f59e0b; border:1px solid #d97706; color:white; }
+.sold { background:#1e3a8a; border:1px solid #162d6f; color:white; cursor:not-allowed; }
+
+.section-label { grid-column: 1 / -1; text-align: center; padding: 8px; font-weight: bold; font-size: 14px; border: 1px solid #ddd; margin: 0; }
+.section-label.section-platino { background:#d8ecff; color:#0f172a; }
+.section-label.section-preferente { background:#ffe6cc; color:#0f172a; }
+.section-label.section-normal { background:#dff3df; color:#0f172a; }
+
+.seat.section-platino { border-color:#9dc9f3; }
+.seat.section-preferente { border-color:#f4c28b; }
+.seat.section-normal { border-color:#9fd19f; }
+
+#seatMap .seat:hover { transform: translateY(-1px); filter: brightness(0.98); }
 #cartPanel { width:320px; background:#fff; padding:8px; border-radius:6px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
 .hidden { display:none; }
 #logSection { flex-basis: 300px; }
