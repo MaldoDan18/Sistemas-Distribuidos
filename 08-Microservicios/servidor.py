@@ -90,6 +90,17 @@ class TicketingAuthorityClient:
             expected_type="PURCHASE_RESPONSE",
         )
 
+    def release_reservation(self, buyer_id, reservation_id, request_id):
+        return self._send(
+            {
+                "type": "RELEASE_TICKET",
+                "buyer_id": buyer_id,
+                "reservation_id": reservation_id,
+                "request_id": request_id,
+            },
+            expected_type="RELEASE_TICKET_RESPONSE",
+        )
+
     def availability(self):
         return self._send({"type": "AVAILABILITY"}, expected_type="AVAILABILITY_RESPONSE")
 
@@ -580,6 +591,20 @@ def create_api(server):
         except Exception as exc:
             return jsonify({"type": "PURCHASE_RESPONSE", "status": "error", "code": "gateway_error", "message": str(exc)}), 503
 
+    @app.route("/api/release_ticket", methods=["POST"])
+    def api_release_ticket():
+        data = request.get_json() or {}
+        request_id = data.get("request_id") or str(uuid.uuid4())
+        try:
+            response = server.authority_client.release_reservation(
+                buyer_id=data.get("buyer_id"),
+                reservation_id=data.get("reservation_id"),
+                request_id=request_id,
+            )
+            return jsonify(response)
+        except Exception as exc:
+            return jsonify({"type": "RELEASE_TICKET_RESPONSE", "status": "error", "code": "gateway_error", "message": str(exc)}), 503
+
     return app
 
 
@@ -702,6 +727,27 @@ def create_builtin_http_api(server, host="127.0.0.1", port=5001):
                     self._send_json(
                         {
                             "type": "PURCHASE_RESPONSE",
+                            "status": "error",
+                            "code": "gateway_error",
+                            "message": str(exc),
+                        },
+                        status=503,
+                    )
+                return
+
+            if self.path == "/api/release_ticket":
+                request_id = data.get("request_id") or str(uuid.uuid4())
+                try:
+                    response = server.authority_client.release_reservation(
+                        buyer_id=data.get("buyer_id"),
+                        reservation_id=data.get("reservation_id"),
+                        request_id=request_id,
+                    )
+                    self._send_json(response)
+                except Exception as exc:
+                    self._send_json(
+                        {
+                            "type": "RELEASE_TICKET_RESPONSE",
                             "status": "error",
                             "code": "gateway_error",
                             "message": str(exc),

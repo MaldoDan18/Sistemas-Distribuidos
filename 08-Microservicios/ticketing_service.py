@@ -305,6 +305,35 @@ class TicketAuthority:
                 "remaining": remaining,
             }
 
+    def release_reservation(self, buyer_id, reservation_id, request_id=None):
+        with self.lock:
+            self._cleanup_expired_locked()
+
+            if self.sales_closed:
+                return {"status": "closed", "message": "La venta fue cerrada."}
+            if not reservation_id:
+                return {"status": "error", "code": "missing_reservation_id"}
+
+            reservation = self.reservations.get(reservation_id)
+            if reservation is None:
+                return {"status": "error", "code": "invalid_or_expired_reservation"}
+            if buyer_id is not None and reservation["buyer_id"] != str(buyer_id):
+                return {"status": "error", "code": "reservation_owner_mismatch"}
+
+            row, col = reservation["seat"]
+            zone = reservation["zone"]
+            self.reservations.pop(reservation_id, None)
+            self.seat_status[row][col] = "FREE"
+            self.zone_free_seats[zone].add((row, col))
+
+            return {
+                "status": "ok",
+                "reservation_id": reservation_id,
+                "zone": zone,
+                "seat": {"row": row, "col": col},
+                "request_id": request_id,
+            }
+
     def get_snapshot(self):
         with self.lock:
             self._cleanup_expired_locked()
@@ -433,6 +462,15 @@ class TicketingServiceHandler(socketserver.StreamRequestHandler):
                     request_id=payload.get("request_id") or str(uuid.uuid4()),
                 )
                 self.send_json({"type": "PURCHASE_RESPONSE", **response})
+                continue
+
+            if message_type == "RELEASE_TICKET":
+                response = self.server.authority.release_reservation(
+                    buyer_id=payload.get("buyer_id"),
+                    reservation_id=payload.get("reservation_id"),
+                    request_id=payload.get("request_id") or str(uuid.uuid4()),
+                )
+                self.send_json({"type": "RELEASE_TICKET_RESPONSE", **response})
                 continue
 
             if message_type == "AVAILABILITY":
