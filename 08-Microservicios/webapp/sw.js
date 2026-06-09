@@ -1,6 +1,6 @@
-const CACHE_NAME = 'pwa-shell-v3';
+const CACHE_NAME = 'pwa-shell-v8';
 const ASSETS = [
-  'index.html', 'styles.css?v=3', 'app.js?v=3', 'manifest.json'
+  'index.html', 'styles.css?v=8', 'app.js?v=8', 'manifest.json'
 ];
 
 self.addEventListener('install', evt => {

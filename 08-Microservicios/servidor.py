@@ -134,6 +134,7 @@ class TicketServer(socketserver.ThreadingTCPServer):
         self.sale_open_event = threading.Event()
         self.sale_closed_event = threading.Event()
         self.close_reason = None
+        self.shutdown_requested = threading.Event()
 
         self.coordinator_client = None
         self.countdown_started_at = None
@@ -254,11 +255,50 @@ class TicketServer(socketserver.ThreadingTCPServer):
             done_count = len(self.done_clients)
         with self.terminal_lock:
             print(f"Cliente {client_id} reportó fin de ejecución ({done_count}/{self.expected_clients})")
+        if done_count >= self.expected_clients:
+            self.close_sale("all_clients_done")
         return done_count
+
+    def disconnect_client(self, client_id):
+        with self.registration_lock:
+            was_connected = client_id in self.connected_clients
+            self.connected_clients.pop(client_id, None)
+            self.ready_clients.discard(client_id)
+            connected_count = len(self.connected_clients)
+        if was_connected:
+            with self.terminal_lock:
+                print(f"Cliente {client_id} cerró conexión ({connected_count}/{self.expected_clients} conectados)")
+        self._maybe_shutdown_if_finished()
+        return connected_count
+
+    def _maybe_shutdown_if_finished(self):
+        should_shutdown = False
+        with self.registration_lock:
+            if (
+                self.sale_closed_event.is_set()
+                and len(self.connected_clients) == 0
+                and len(self.done_clients) >= self.expected_clients
+                and not self.shutdown_requested.is_set()
+            ):
+                self.shutdown_requested.set()
+                should_shutdown = True
+
+        if should_shutdown:
+            with self.terminal_lock:
+                print("Todos los clientes cerraron conexión. El servidor se apagará automáticamente.")
+
+            def _shutdown_later():
+                time.sleep(0.5)
+                try:
+                    self.shutdown()
+                except Exception:
+                    pass
+
+            threading.Thread(target=_shutdown_later, daemon=True).start()
 
     def close_sale(self, reason):
         if self.sale_closed_event.is_set():
-            return
+            return {"status": "ok", "close_reason": self.close_reason or reason}
         try:
             self.authority_client.close_sales(reason)
         except Exception:
@@ -266,6 +306,8 @@ class TicketServer(socketserver.ThreadingTCPServer):
         self.sale_open_event.clear()
         self.sale_closed_event.set()
         self.close_reason = reason
+        self._maybe_shutdown_if_finished()
+        return {"status": "ok", "close_reason": reason}
 
 
 class CoordinatorClient:
@@ -485,6 +527,24 @@ class TicketRequestHandler(socketserver.StreamRequestHandler):
                         "client_id": client_id,
                         "done_clients": done_count,
                         "expected_clients": self.server.expected_clients,
+                        "sale_status": self.server.get_sale_status(),
+                    }
+                )
+                continue
+
+            if message_type == "CLIENT_DISCONNECT":
+                client_id = payload.get("client_id")
+                if not client_id:
+                    self.send_json({"type": "ERROR", "code": "missing_client_id"})
+                    continue
+                connected_count = self.server.disconnect_client(client_id)
+                self.send_json(
+                    {
+                        "type": "DISCONNECT_ACK",
+                        "client_id": client_id,
+                        "connected_clients": connected_count,
+                        "expected_clients": self.server.expected_clients,
+                        "sale_status": self.server.get_sale_status(),
                     }
                 )
                 continue
@@ -604,6 +664,50 @@ def create_api(server):
             return jsonify(response)
         except Exception as exc:
             return jsonify({"type": "RELEASE_TICKET_RESPONSE", "status": "error", "code": "gateway_error", "message": str(exc)}), 503
+
+    @app.route("/api/client_done", methods=["POST"])
+    def api_client_done():
+        data = request.get_json() or {}
+        client_id = data.get("client_id")
+        if not client_id:
+            return jsonify({"type": "ERROR", "code": "missing_client_id"}), 400
+        done_count = server.mark_client_done(client_id)
+        return jsonify(
+            {
+                "type": "DONE_ACK",
+                "client_id": client_id,
+                "done_clients": done_count,
+                "expected_clients": server.expected_clients,
+                "sale_status": server.get_sale_status(),
+            }
+        )
+
+    @app.route("/api/client_disconnect", methods=["POST"])
+    def api_client_disconnect():
+        data = request.get_json() or {}
+        client_id = data.get("client_id")
+        if not client_id:
+            return jsonify({"type": "ERROR", "code": "missing_client_id"}), 400
+        connected_count = server.disconnect_client(client_id)
+        return jsonify(
+            {
+                "type": "DISCONNECT_ACK",
+                "client_id": client_id,
+                "connected_clients": connected_count,
+                "expected_clients": server.expected_clients,
+                "sale_status": server.get_sale_status(),
+            }
+        )
+
+    @app.route("/api/close_sale", methods=["POST"])
+    def api_close_sale():
+        data = request.get_json() or {}
+        reason = data.get("reason") or "manual_close"
+        try:
+            response = server.close_sale(reason)
+            return jsonify({"type": "CLOSE_SALE_RESPONSE", "status": "ok", "sale_status": server.get_sale_status(), **response})
+        except Exception as exc:
+            return jsonify({"type": "CLOSE_SALE_RESPONSE", "status": "error", "code": "gateway_error", "message": str(exc)}), 503
 
     return app
 
@@ -748,6 +852,57 @@ def create_builtin_http_api(server, host="127.0.0.1", port=5001):
                     self._send_json(
                         {
                             "type": "RELEASE_TICKET_RESPONSE",
+                            "status": "error",
+                            "code": "gateway_error",
+                            "message": str(exc),
+                        },
+                        status=503,
+                    )
+                return
+
+            if self.path == "/api/client_done":
+                client_id = data.get("client_id")
+                if not client_id:
+                    self._send_json({"type": "ERROR", "code": "missing_client_id"}, status=400)
+                    return
+                done_count = server.mark_client_done(client_id)
+                self._send_json(
+                    {
+                        "type": "DONE_ACK",
+                        "client_id": client_id,
+                        "done_clients": done_count,
+                        "expected_clients": server.expected_clients,
+                        "sale_status": server.get_sale_status(),
+                    }
+                )
+                return
+
+            if self.path == "/api/client_disconnect":
+                client_id = data.get("client_id")
+                if not client_id:
+                    self._send_json({"type": "ERROR", "code": "missing_client_id"}, status=400)
+                    return
+                connected_count = server.disconnect_client(client_id)
+                self._send_json(
+                    {
+                        "type": "DISCONNECT_ACK",
+                        "client_id": client_id,
+                        "connected_clients": connected_count,
+                        "expected_clients": server.expected_clients,
+                        "sale_status": server.get_sale_status(),
+                    }
+                )
+                return
+
+            if self.path == "/api/close_sale":
+                reason = data.get("reason") or "manual_close"
+                try:
+                    response = server.close_sale(reason)
+                    self._send_json({"type": "CLOSE_SALE_RESPONSE", "status": "ok", "sale_status": server.get_sale_status(), **response})
+                except Exception as exc:
+                    self._send_json(
+                        {
+                            "type": "CLOSE_SALE_RESPONSE",
                             "status": "error",
                             "code": "gateway_error",
                             "message": str(exc),

@@ -14,7 +14,7 @@ Lo que implica que el servicio de tickets se convierta en la autoridad que manej
 
 ## Requisitos de funcionamiento
 
-Flask v2.0
+Flask>=2.0
 
 # Compilación 
 
